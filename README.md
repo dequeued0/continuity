@@ -4,8 +4,10 @@ Continuity is a replacement for the AutoModerator schedule on Reddit. Continuity
 
 ## Features
 
-- Continuity allows Reddit scheduled posts to be configured via a wiki page. The format the same as the `automoderator-schedule` format used by AutoModerator and it can even be left in the same location.
-- Advanced features such as `rrule` are supported.
+- Continuity allows Reddit scheduled posts to be configured via a wiki page. The format is the same as the [`automoderator-schedule` format](https://www.reddit.com/r/AutoModerator/comments/1z7rlu/now_available_for_testing_wikiconfigurable/) used by AutoModerator and it can even be left in the same location.
+- Supports all of the features from AutoModerator schedule including:
+  - including dates in title and text
+  - recurrence rules (`rrule`)
 - Includes two testing modes: one for dry runs and one for posting to a sandbox subreddit.
 
 ## Setup
@@ -16,7 +18,7 @@ Requires praw, PyYAML, python-dateutil, and regex.
 
 ### Notes
 
-If you want to leave the wiki page in the same location as AutoModerator, make sure you disable AutoModerator by saving an empty configuration and sending /u/AutoModerator a private message to tell it to update.
+If you want to leave the wiki page in the same location as AutoModerator, make sure you disable AutoModerator by saving an empty configuration and sending /u/AutoModerator a private message to tell it to update (this may require a large number of attempts). After AutoModerator has sent an acknowledgement, you can restore your working configuration.
 
 ## Examples
 
