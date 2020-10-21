@@ -4,7 +4,9 @@ import sys
 import logging
 import argparse
 import praw
+import prawcore.exceptions
 import regex
+import time
 import yaml
 from datetime import datetime, timezone
 from dateutil.parser import parse
@@ -43,57 +45,88 @@ r.validate_on_submit = True
 
 def read_schedule(subreddit):
     posts = []
+
+    for attempt in range(5):
+        try:
+            page = subreddit.wiki[args.wiki]
+            if len(page.content_md) > 0:
+                for section in yaml.safe_load_all(page.content_md):
+                    post = process_section(subreddit, section)
+                    if post:
+                        posts.append(post)
+
+            # success
+            if posts:
+                return posts
+
+            # no posts and no exceptions?
+            logging.error("empty schedule for /r/{}".format(subreddit))
+            break
+        # unrecoverable exception
+        except (prawcore.exceptions.Forbidden, prawcore.exceptions.NotFound) as e:
+            logging.error("unable to read schedule on /r/{}: {}".format(subreddit, e))
+            break
+        # possibly recoverable exception
+        except Exception as e:
+            logging.error("exception reading schedule on /r/{}: {}".format(subreddit, e))
+
+        # always sleep after failures
+        delay = (attempt + 1) * 30
+        logging.info("sleeping {} seconds".format(delay))
+        time.sleep(delay)
+
+    # only reached on failure
+    subreddit.message("Scheduled post issue", "Unable to read schedule. Please investigate.")
+
+
+def process_section(subreddit, section):
+    post = {}
+
     try:
-        page = subreddit.wiki[args.wiki]
-        if len(page.content_md) > 0:
-            for section in yaml.safe_load_all(page.content_md):
-                try:
-                    post = {}
-                    if not section:
-                        continue
-                    # subreddit
-                    if args.sandbox:
-                        post["subreddit"] = r.subreddit(args.sandbox)
-                    else:
-                        post["subreddit"] = subreddit
-                    # skip if missing required settings
-                    if not (section.get("title") and section.get("text") and section.get("first")):
-                        continue
-                    # simple settings that just default to None
-                    for field in ["title", "text", "rrule", "contest_mode"]:
-                        post[field] = section.get(field)
-                    # more complex settings
-                    post["first"] = parse(section.get("first"))
-                    post["distinguish"] = section.get("distinguish", True)
-                    if section.get("repeat"):
-                        m = regex.search(r'\b(\d+)\s+(hour|day|week|month|year)s?\b', section.get("repeat"))
-                        if m:
-                            if m.group(2) == "hour":
-                                post["repeat"] = relativedelta(hours=int(m.group(1)))
-                            elif m.group(2) == "day":
-                                post["repeat"] = relativedelta(days=int(m.group(1)))
-                            elif m.group(2) == "week":
-                                post["repeat"] = relativedelta(weeks=int(m.group(1)))
-                            elif m.group(2) == "month":
-                                post["repeat"] = relativedelta(months=int(m.group(1)))
-                            elif m.group(2) == "year":
-                                post["repeat"] = relativedelta(years=int(m.group(1)))
-                    if section.get("sticky"):
-                        if regex.search(r'^1$', str(section.get("sticky"))):
-                            post["sticky"] = 1
-                        elif regex.search(r'^(2|true)$', str(section.get("sticky"))):
-                            post["sticky"] = 2
-                    # save the post
-                    posts.append(post)
-                except Exception as e:
-                    logging.error("exception reading {} for {}: {}".format(section, subreddit, e))
+        if not section:
+            return None
+        # subreddit
+        if args.sandbox:
+            post["subreddit"] = r.subreddit(args.sandbox)
+        else:
+            post["subreddit"] = subreddit
+        # skip if missing required settings
+        if not (section.get("title") and section.get("text") and section.get("first")):
+            return None
+        # simple settings that just default to None
+        for field in ["title", "text", "rrule", "contest_mode"]:
+            post[field] = section.get(field)
+        # more complex settings
+        post["first"] = parse(section.get("first"))
+        post["distinguish"] = section.get("distinguish", True)
+        if section.get("repeat"):
+            m = regex.search(r'\b(\d+)\s+(hour|day|week|month|year)s?\b', section.get("repeat"))
+            if m:
+                if m.group(2) == "hour":
+                    post["repeat"] = relativedelta(hours=int(m.group(1)))
+                elif m.group(2) == "day":
+                    post["repeat"] = relativedelta(days=int(m.group(1)))
+                elif m.group(2) == "week":
+                    post["repeat"] = relativedelta(weeks=int(m.group(1)))
+                elif m.group(2) == "month":
+                    post["repeat"] = relativedelta(months=int(m.group(1)))
+                elif m.group(2) == "year":
+                    post["repeat"] = relativedelta(years=int(m.group(1)))
+        if section.get("sticky"):
+            if regex.search(r'^1$', str(section.get("sticky"))):
+                post["sticky"] = 1
+            elif regex.search(r'^(2|true)$', str(section.get("sticky"))):
+                post["sticky"] = 2
     except Exception as e:
-        logging.debug("exception reading schedule for {}: {}".format(subreddit, e))
-    return posts
+        logging.error("exception reading {} on /r/{}: {}".format(section, subreddit, e))
+        return None
+
+    return post
 
 
 def consider_posts(posts, now):
     queue = []
+
     for post in posts:
         try:
             rrule = None
@@ -129,11 +162,13 @@ def consider_posts(posts, now):
                     break
         except Exception as e:
             logging.error("exception considering {}: {}".format(post, e))
+
     return queue
 
 
 def replace_dates(string, now):
     count = 0
+
     while count < 100:
         count += 1
         m = regex.search(r'\{\{date(?:([+-])(\d+))?\s+(.*?)\}\}', string)
@@ -146,14 +181,16 @@ def replace_dates(string, now):
             output_date -= relativedelta(days=int(m.group(2)))
         timeformat = output_date.strftime(m.group(3))
         string = string[:m.start()] + timeformat + string[m.end():]
+
     return string
 
 
 def submit_queue(queue):
-    if not queue:
-        return
     post = None
+
     try:
+        if not queue:
+            return
         if len(queue) > args.limit:
             logging.error("submission queue is {} entries long, something may be wrong".format(len(queue)))
             subreddits = set()
@@ -164,39 +201,103 @@ def submit_queue(queue):
                 subreddit.message("Scheduled post issue",
                                   "Attempted to make {} posts at once. Please investigate.".format(len(queue)))
             sys.exit(1)
-        else:
-            for post in queue:
-                if args.brief:
-                    logging.info("{}: {}".format(post["when"], post["title"]))
-                else:
-                    logging.info("posting {}".format(post))
-                if args.dry_run:
-                    continue
-                submission = post["subreddit"].submit(post["title"], selftext=post["text"])
-                if post.get("distinguish"):
-                    submission.mod.distinguish()
-                if post.get("sticky"):
-                    if post["sticky"] == 1:
-                        submission.mod.sticky(bottom=False)
-                    else:
-                        submission.mod.sticky(bottom=True)
-                if post.get("contest_mode"):
-                    submission.contest_mode()
-                submission.disable_inbox_replies()
-                # sandbox test mode
-                if args.sandbox:
-                    submission.reply(post["when"])
     except Exception as e:
-        logging.error("exception posting {}: {}".format(post, e))
-        if post and post.get("subreddit"):
-            post["subreddit"].message("Scheduled post issue", "Exception generated while posting. Please investigate.")
+        logging.error("exception checking post limit {}: {}".format(queue, e))
         sys.exit(1)
+
+    try:
+        for post in queue:
+            submit_post(post)
+    except Exception as e:
+        logging.error("exception posting queue {}: {}".format(queue, e))
+        sys.exit(1)
+
+
+def recently_exists(subreddit, title):
+    for recent in r.user.me().submissions.new(limit=100):
+        if recent.created_utc < time.time() - args.seconds:
+            continue
+        if recent.subreddit == subreddit and recent.title == title:
+            return recent
+    return False
+
+
+def submit_post(post):
+    submission = None
+    distinguish = False
+    sticky = False
+    contest_mode = False
+    disable_inbox_replies = False
+
+    for attempt in range(5):
+        try:
+            if args.brief:
+                logging.info("{}: {}".format(post["when"], post["title"]))
+            else:
+                logging.info("posting {}".format(post))
+
+            # dry-run mode
+            if args.dry_run:
+                return
+
+            # avoid posting more than once
+            if attempt > 0:
+                if not submission:
+                    submission = recently_exists(post["subreddit"], post["title"])
+                if submission:
+                    logging.info("already submitted {}".format(submission.permalink))
+
+            # do stuff
+            if not submission:
+                submission = post["subreddit"].submit(post["title"], selftext=post["text"])
+            if post.get("distinguish") and not distinguish:
+                submission.mod.distinguish()
+                distinguish = True
+            if post.get("sticky") and not sticky:
+                if post["sticky"] == 1:
+                    submission.mod.sticky(bottom=False)
+                else:
+                    submission.mod.sticky(bottom=True)
+                sticky = True
+            if post.get("contest_mode") and not contest_mode:
+                submission.contest_mode()
+                contest_mode = True
+            if not disable_inbox_replies:
+                submission.disable_inbox_replies()
+                disable_inbox_replies = True
+
+            # sandbox test mode
+            if args.sandbox:
+                submission.reply(post["when"])
+
+            # success
+            if submission:
+                return
+
+            # no submission and no exceptions?
+            logging.error("unknown error making post {}".format(post))
+        except Exception as e:
+            logging.error("exception making post {}: {}".format(post, e))
+
+        # always sleep after failures
+        delay = (attempt + 1) * 30
+        logging.info("sleeping {} seconds".format(delay))
+        time.sleep(delay)
+
+    # only reached on failure
+    if post.get("subreddit"):
+        post["subreddit"].message("Scheduled post issue", "Please investigate.")
 
 
 def run():
     posts = []
+
+    # read schedules
     for subreddit in args.subreddit:
-        posts.extend(read_schedule(r.subreddit(subreddit)))
+        schedule = read_schedule(r.subreddit(subreddit))
+        if schedule:
+            posts.extend(schedule)
+
     # test mode
     if args.start or args.end or args.sandbox or args.dry_run:
         if args.sandbox == args.dry_run:
@@ -217,7 +318,8 @@ def run():
             logging.error("invalid timestamps (start={}, end={})".format(start, end))
             sys.exit(1)
         sys.exit(0)
-    # main case
+
+    # not a test
     now = datetime.now(timezone.utc)
     queue = consider_posts(posts, now)
     submit_queue(queue)
