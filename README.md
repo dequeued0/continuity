@@ -8,6 +8,8 @@ If your subreddit has a simple schedule, you should use the native [scheduled an
 
 If nobody on your moderation team is familiar with running Reddit bots on a Linux server, run away!
 
+However, if you have bot experience and want to maintain a complex schedule in a wiki page, need `rrule` support, want to make posts that can be edited after posting (using your own bot or shared account), or want to write code to further customize how scheduled posts are made then this script may be helpful to you.
+
 ## Features
 
 - Continuity allows Reddit scheduled posts to be configured via a wiki page. The format is the same as the [`automoderator-schedule` format](https://www.reddit.com/r/AutoModerator/comments/1z7rlu/now_available_for_testing_wikiconfigurable/) used by AutoModerator and it can even be left in the same location.
