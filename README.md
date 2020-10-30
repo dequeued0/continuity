@@ -8,7 +8,7 @@ If your subreddit has a simple schedule, you should use the native [scheduled an
 
 If nobody on your moderation team is familiar with running Reddit bots on a Linux server, run away!
 
-However, if you have bot experience and want to maintain a complex schedule in a wiki page, need `rrule` support, want to make posts that can be edited after posting (using your own bot or shared account), or want to write code to further customize how scheduled posts are made then this script may be helpful to you.
+However, if you have bot experience and want to maintain a complex schedule in a wiki page, need `rrule` support, or want to write code to further customize how scheduled posts are made then this script may be helpful to you.
 
 ## Features
 
